@@ -1,0 +1,42 @@
+name: "macos-all"
+
+runs:
+  using: composite
+  steps:
+    - name: Code checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        brew install nasm
+
+    - name: Install vcpkg
+      run: |
+        git clone https://github.com/microsoft/vcpkg builder
+        ./builder/bootstrap-vcpkg.sh
+        cp vcpkg/darwin-amd64-static.cmake builder/triplets/community
+        cp vcpkg/darwin-arm64-static.cmake builder/triplets/community
+
+    - name: Build libyuv
+      run: |
+        ./builder/vcpkg install "libyuv:darwin-amd64-static"
+        ./builder/vcpkg install "libyuv:darwin-arm64-static"
+
+    - name: Zip libyuv
+      run: |
+        mv $GITHUB_WORKSPACE/builder/installed/darwin-amd64-static/include $GITHUB_WORKSPACE/build/libyuv/include
+
+        mkdir -p $GITHUB_WORKSPACE/build/libyuv/lib 
+        cp $GITHUB_WORKSPACE/builder/installed/darwin-amd64-static/lib/*.a $GITHUB_WORKSPACE/build/libyuv/lib
+        cd $GITHUB_WORKSPACE/build/libyuv
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/libyuv_darwin_amd64.zip include lib
+        
+        rm -rf $GITHUB_WORKSPACE/build/libyuv/lib/*
+        cp $GITHUB_WORKSPACE/builder/installed/darwin-arm64-static/lib/*.a $GITHUB_WORKSPACE/build/libyuv/lib
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/libyuv_darwin_arm64.zip include lib
+
+    - name: Save artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries-darwin
+        path: "*.zip"
