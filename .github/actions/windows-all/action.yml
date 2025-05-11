@@ -1,4 +1,4 @@
-name: "windows-amd64"
+name: "windows-all"
 
 runs:
   using: composite
@@ -21,63 +21,62 @@ runs:
     - name: Install vcpkg
       shell: bash
       run: |
-        mkdir -p $GITHUB_WORKSPACE/local_amd64/lib
+        mkdir -p $GITHUB_WORKSPACE/static_x64/lib
         git clone https://github.com/microsoft/vcpkg builder
         ./builder/bootstrap-vcpkg.sh
-        cp vcpkg/windows-amd64-static.cmake builder/triplets/community
 
     - name: Build libyuv & dav1d
       shell: bash
       run: |
-        ./builder/vcpkg install "libyuv:windows-amd64-static"
-        ./builder/vcpkg install "dav1d:windows-amd64-static"
+        ./builder/vcpkg install "libyuv:x64-mingw-static"
+        ./builder/vcpkg install "dav1d:x64-mingw-static"
 
     - name: Build svt-av1
       shell: bash
       run: |
-        git clone https://gitlab.com/AOMediaCodec/SVT-AV1 $GITHUB_WORKSPACE/svt-av1_amd64
-        mkdir -p $GITHUB_WORKSPACE/svt-av1_amd64/local
-        cd $GITHUB_WORKSPACE/svt-av1_amd64/Build
-        cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/svt-av1_amd64/local ..
+        git clone https://gitlab.com/AOMediaCodec/SVT-AV1 $GITHUB_WORKSPACE/svt-av1_x64
+        mkdir -p $GITHUB_WORKSPACE/svt-av1_x64/local
+        cd $GITHUB_WORKSPACE/svt-av1_x64/Build
+        cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/svt-av1_x64/local ..
         mingw32-make -j4
         mingw32-make install
 
     - name: Prepare dependencies
       shell: bash
       run: |
-        cp -r $GITHUB_WORKSPACE/builder/installed/windows-amd64-static/include $GITHUB_WORKSPACE/local_amd64/
-        for file in "$GITHUB_WORKSPACE"/builder/installed/windows-amd64-static/lib/*.a; do
-          cp "$file" "$GITHUB_WORKSPACE/local_amd64/lib/"
+        cp -r $GITHUB_WORKSPACE/builder/installed/x64-mingw-static/include $GITHUB_WORKSPACE/static_x64/
+        for file in "$GITHUB_WORKSPACE"/builder/installed/x64-mingw-static/lib/*.a; do
+          cp "$file" "$GITHUB_WORKSPACE/static_x64/lib/"
         done
         
-        cp -r "$GITHUB_WORKSPACE"/svt-av1_amd64/local/include/svt-av1 "$GITHUB_WORKSPACE"/local_amd64/include/
-        cp "$GITHUB_WORKSPACE"/svt-av1_amd64/local/lib/libSvtAv1Enc.a "$GITHUB_WORKSPACE"/local_amd64/lib/libSvtAv1Enc.a
+        cp -r "$GITHUB_WORKSPACE"/svt-av1_x64/local/include/svt-av1 "$GITHUB_WORKSPACE"/static_x64/include/
+        cp "$GITHUB_WORKSPACE"/svt-av1_x64/local/lib/libSvtAv1Enc.a "$GITHUB_WORKSPACE"/static_x64/lib/libSvtAv1Enc.a
 
     - name: Build avif
       shell: bash
       run: |
-        git clone https://github.com/AOMediaCodec/libavif avif_amd64
+        git clone https://github.com/AOMediaCodec/libavif avif_x64
         
-        mkdir -p $GITHUB_WORKSPACE/avif_amd64/build
-        cd $GITHUB_WORKSPACE/avif_amd64/build
-        cmake -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/local_amd64 ..
+        mkdir -p $GITHUB_WORKSPACE/avif_x64/build
+        cd $GITHUB_WORKSPACE/avif_x64/build
+        cmake -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/static_x64 ..
         mingw32-make -j4
 
     - name: Prepare local
       shell: bash
       run: |
-        mv $GITHUB_WORKSPACE/local_amd64/lib/libSvtAv1Enc.a $GITHUB_WORKSPACE/local_amd64/lib/libsvtav1.a
-        cp -r "$GITHUB_WORKSPACE"/avif_amd64/include/avif "$GITHUB_WORKSPACE"/local_amd64/include/
-        cp "$GITHUB_WORKSPACE"/avif_amd64/build/libavif.a "$GITHUB_WORKSPACE"/local_amd64/lib/libavif.a
+        mv $GITHUB_WORKSPACE/static_x64/lib/libSvtAv1Enc.a $GITHUB_WORKSPACE/static_x64/lib/libsvtav1.a
+        cp -r "$GITHUB_WORKSPACE"/avif_x64/include/avif "$GITHUB_WORKSPACE"/static_x64/include/
+        cp "$GITHUB_WORKSPACE"/avif_x64/build/libavif.a "$GITHUB_WORKSPACE"/static_x64/lib/libavif.a
 
     - name: Zip local
       shell: bash
       run: |
-        cd $GITHUB_WORKSPACE/local_amd64
-        7z a -tzip -mx=9 $GITHUB_WORKSPACE/local_windows_amd64.zip include lib
+        cd $GITHUB_WORKSPACE/static_x64
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/static_windows_x64.zip include lib
 
     - name: Save artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: binaries-windows-amd64
+        name: binaries-windows-x64
         path: "*.zip"
