@@ -12,6 +12,7 @@ runs:
         brew install nasm
         mkdir -p $GITHUB_WORKSPACE/static_x64/lib
         mkdir -p $GITHUB_WORKSPACE/static_arm64/lib
+        mkdir -p $GITHUB_WORKSPACE/dynamic_arm64/lib
 
     - name: Install vcpkg
       shell: bash
@@ -28,12 +29,16 @@ runs:
         
         ./builder/vcpkg install "libyuv:arm64-osx"
         ./builder/vcpkg install "dav1d:arm64-osx"
+        
+        ./builder/vcpkg install "libyuv:arm64-osx-dynamic"
+        ./builder/vcpkg install "dav1d:arm64-osx-dynamic"
 
     - name: Build svt-av1
       shell: bash
       run: |
         git clone https://gitlab.com/AOMediaCodec/SVT-AV1 $GITHUB_WORKSPACE/svt-av1_x64
         cp -r $GITHUB_WORKSPACE/svt-av1_x64 $GITHUB_WORKSPACE/svt-av1_arm64
+        cp -r $GITHUB_WORKSPACE/svt-av1_x64 $GITHUB_WORKSPACE/svt-av1_arm64_dynamic
 
         cd $GITHUB_WORKSPACE/svt-av1_x64/Build
         cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/svt-av1_x64/local -DCMAKE_OSX_ARCHITECTURES=x86_64 ..
@@ -41,6 +46,10 @@ runs:
         
         cd $GITHUB_WORKSPACE/svt-av1_arm64/Build
         cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/svt-av1_arm64/local -DCMAKE_OSX_ARCHITECTURES=arm64 ..
+        ninja && ninja install
+        
+        cd $GITHUB_WORKSPACE/svt-av1_arm64_dynamic/Build
+        cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/svt-av1_arm64_dynamic/local -DCMAKE_OSX_ARCHITECTURES=arm64 ..
         ninja && ninja install
 
     - name: Prepare dependencies
@@ -52,17 +61,24 @@ runs:
         cp -r $GITHUB_WORKSPACE/builder/installed/arm64-osx/include $GITHUB_WORKSPACE/static_arm64/include
         cp $GITHUB_WORKSPACE/builder/installed/arm64-osx/lib/*.a $GITHUB_WORKSPACE/static_arm64/lib
         
+        cp -r $GITHUB_WORKSPACE/builder/installed/arm64-osx-dynamic/include $GITHUB_WORKSPACE/dynamic_arm64/include
+        cp $GITHUB_WORKSPACE/builder/installed/arm64-osx-dynamic/lib/*.dylib $GITHUB_WORKSPACE/dynamic_arm64/lib
+        
         cp -r $GITHUB_WORKSPACE/svt-av1_x64/local/include/svt-av1 $GITHUB_WORKSPACE/static_x64/include
         cp $GITHUB_WORKSPACE/svt-av1_x64/local/lib/libSvtAv1Enc.a $GITHUB_WORKSPACE/static_x64/lib/libSvtAv1Enc.a
         
         cp -r $GITHUB_WORKSPACE/svt-av1_arm64/local/include/svt-av1 $GITHUB_WORKSPACE/static_arm64/include
         cp $GITHUB_WORKSPACE/svt-av1_arm64/local/lib/libSvtAv1Enc.a $GITHUB_WORKSPACE/static_arm64/lib/libSvtAv1Enc.a
+        
+        cp -r $GITHUB_WORKSPACE/svt-av1_arm64_dynamic/local/include/svt-av1 $GITHUB_WORKSPACE/dynamic_arm64/include
+        cp $GITHUB_WORKSPACE/svt-av1_arm64_dynamic/local/lib/libSvtAv1Enc.dylib $GITHUB_WORKSPACE/dynamic_arm64/lib/libSvtAv1Enc.dylib
 
     - name: Build avif
       shell: bash
       run: |
         git clone https://github.com/AOMediaCodec/libavif avif_x64
         cp -r $GITHUB_WORKSPACE/avif_x64 $GITHUB_WORKSPACE/avif_arm64
+        cp -r $GITHUB_WORKSPACE/avif_x64 $GITHUB_WORKSPACE/avif_arm64_dynamic
         
         mkdir -p $GITHUB_WORKSPACE/avif_x64/build
         cd $GITHUB_WORKSPACE/avif_x64/build
@@ -72,6 +88,11 @@ runs:
         mkdir -p $GITHUB_WORKSPACE/avif_arm64/build
         cd $GITHUB_WORKSPACE/avif_arm64/build
         cmake -DBUILD_SHARED_LIBS=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/static_arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 ..
+        make
+        
+        mkdir -p $GITHUB_WORKSPACE/avif_arm64_dynamic/build
+        cd $GITHUB_WORKSPACE/avif_arm64_dynamic/build
+        cmake -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/dynamic_arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 ..
         make
 
     - name: Prepare local
@@ -84,6 +105,10 @@ runs:
         mv $GITHUB_WORKSPACE/static_arm64/lib/libSvtAv1Enc.a $GITHUB_WORKSPACE/static_arm64/lib/libsvtav1.a
         cp -r $GITHUB_WORKSPACE/avif_arm64/include/avif $GITHUB_WORKSPACE/static_arm64/include
         cp $GITHUB_WORKSPACE/avif_arm64/build/libavif.a $GITHUB_WORKSPACE/static_arm64/lib/libavif.a
+        
+        mv $GITHUB_WORKSPACE/dynamic_arm64/lib/libSvtAv1Enc.dylib $GITHUB_WORKSPACE/dynamic_arm64/lib/libsvtav1.dylib
+        cp -r $GITHUB_WORKSPACE/avif_arm64_dynamic/include/avif $GITHUB_WORKSPACE/dynamic_arm64/include
+        cp $GITHUB_WORKSPACE/avif_arm64_dynamic/build/libavif.dylib $GITHUB_WORKSPACE/dynamic_arm64/lib/libavif.dylib
 
     - name: Zip local
       shell: bash
@@ -93,6 +118,9 @@ runs:
         
         cd $GITHUB_WORKSPACE/static_arm64
         7z a -tzip -mx=9 $GITHUB_WORKSPACE/static_osx_arm64.zip include lib
+        
+        cd $GITHUB_WORKSPACE/dynamic_arm64
+        7z a -tzip -mx=9 $GITHUB_WORKSPACE/dynamic_osx_arm64.zip include lib
 
     - name: Save artifacts
       uses: actions/upload-artifact@v4
