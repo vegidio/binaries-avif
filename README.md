@@ -1,6 +1,6 @@
 # binaries-avif
 
-A repository with the binaries for the libavif.
+A repository with static and dynamic binaries for libavif.
 
 It supports macOS (x64 & arm64), Linux (x64 & arm64) and Windows (x64).
 
