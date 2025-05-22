@@ -43,13 +43,13 @@ runs:
         
         mkdir -p $GITHUB_WORKSPACE/svt-av1_x64/local
         cd $GITHUB_WORKSPACE/svt-av1_x64/Build
-        cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/svt-av1_x64/local ..
+        cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DSVT_AV1_LTO=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/svt-av1_x64/local ..
         mingw32-make -j4
         mingw32-make install
         
         mkdir -p $GITHUB_WORKSPACE/svt-av1_x64_dynamic/local
         cd $GITHUB_WORKSPACE/svt-av1_x64_dynamic/Build
-        cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/svt-av1_x64_dynamic/local ..
+        cmake -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DSVT_AV1_LTO=OFF -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/svt-av1_x64_dynamic/local ..
         mingw32-make -j4
         mingw32-make install
 
