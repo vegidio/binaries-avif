@@ -1,4 +1,4 @@
-name: "windows-all"
+name: "windows-x64"
 
 runs:
   using: composite
