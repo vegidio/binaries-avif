@@ -4,6 +4,14 @@ name: "macos"
 # vcpkg release tag: 2026.06.01
 # libavif release tag: v1.4.2
 
+inputs:
+  arch:
+    description: "Target architecture suffix (e.g. x64, arm64)"
+    required: true
+  triplet:
+    description: "vcpkg static triplet (e.g. x64-osx); the dynamic triplet is derived as <triplet>-dynamic"
+    required: true
+
 runs:
   using: composite
   steps:
@@ -11,17 +19,15 @@ runs:
       shell: bash
       run: |
         brew install nasm
-        mkdir -p $GITHUB_WORKSPACE/static_x64/lib
-        mkdir -p $GITHUB_WORKSPACE/dynamic_x64/lib
-        mkdir -p $GITHUB_WORKSPACE/static_arm64/lib
-        mkdir -p $GITHUB_WORKSPACE/dynamic_arm64/lib
+        mkdir -p $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib
+        mkdir -p $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib
         mkdir -p $GITHUB_WORKSPACE/vcpkg_cache
 
     - name: Cache vcpkg binaries
       uses: actions/cache@v4
       with:
         path: ${{ github.workspace }}/vcpkg_cache
-        key: vcpkg-${{ runner.os }}-osx-2026.06.01
+        key: vcpkg-${{ runner.os }}-${{ inputs.triplet }}-2026.06.01
 
     - name: Install vcpkg
       shell: bash
@@ -34,101 +40,73 @@ runs:
       env:
         VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
       run: |
-        ./builder/vcpkg install "libyuv:x64-osx"
-        ./builder/vcpkg install "dav1d:x64-osx"
-        ./builder/vcpkg install "svt-av1:x64-osx"
+        ./builder/vcpkg install "libyuv:${{ inputs.triplet }}"
+        ./builder/vcpkg install "dav1d:${{ inputs.triplet }}"
+        ./builder/vcpkg install "svt-av1:${{ inputs.triplet }}"
 
-        ./builder/vcpkg install "libyuv:x64-osx-dynamic"
-        ./builder/vcpkg install "dav1d:x64-osx-dynamic"
-        ./builder/vcpkg install "svt-av1:x64-osx-dynamic"
-
-        ./builder/vcpkg install "libyuv:arm64-osx"
-        ./builder/vcpkg install "dav1d:arm64-osx"
-        ./builder/vcpkg install "svt-av1:arm64-osx"
-
-        ./builder/vcpkg install "libyuv:arm64-osx-dynamic"
-        ./builder/vcpkg install "dav1d:arm64-osx-dynamic"
-        ./builder/vcpkg install "svt-av1:arm64-osx-dynamic"
+        ./builder/vcpkg install "libyuv:${{ inputs.triplet }}-dynamic"
+        ./builder/vcpkg install "dav1d:${{ inputs.triplet }}-dynamic"
+        ./builder/vcpkg install "svt-av1:${{ inputs.triplet }}-dynamic"
 
     - name: Prepare dependencies
       shell: bash
       run: |
-        cp -r $GITHUB_WORKSPACE/builder/installed/x64-osx/include $GITHUB_WORKSPACE/static_x64/include
-        cp $GITHUB_WORKSPACE/builder/installed/x64-osx/lib/*.a $GITHUB_WORKSPACE/static_x64/lib
+        cp -r $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}/include $GITHUB_WORKSPACE/static_${{ inputs.arch }}/include
+        cp $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}/lib/*.a $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib
 
-        cp -r $GITHUB_WORKSPACE/builder/installed/x64-osx-dynamic/include $GITHUB_WORKSPACE/dynamic_x64/include
-        cp $GITHUB_WORKSPACE/builder/installed/x64-osx-dynamic/lib/*.dylib $GITHUB_WORKSPACE/dynamic_x64/lib
-
-        cp -r $GITHUB_WORKSPACE/builder/installed/arm64-osx/include $GITHUB_WORKSPACE/static_arm64/include
-        cp $GITHUB_WORKSPACE/builder/installed/arm64-osx/lib/*.a $GITHUB_WORKSPACE/static_arm64/lib
-
-        cp -r $GITHUB_WORKSPACE/builder/installed/arm64-osx-dynamic/include $GITHUB_WORKSPACE/dynamic_arm64/include
-        cp $GITHUB_WORKSPACE/builder/installed/arm64-osx-dynamic/lib/*.dylib $GITHUB_WORKSPACE/dynamic_arm64/lib
+        cp -r $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}-dynamic/include $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/include
+        # cp -a preserves the versioned .dylib symlinks as links rather than copies.
+        cp -a $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}-dynamic/lib/*.dylib* $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib
 
     - name: Build avif
       shell: bash
       run: |
-        git clone --depth 1 --branch v1.4.2 https://github.com/AOMediaCodec/libavif avif_x64
-        cp -r $GITHUB_WORKSPACE/avif_x64 $GITHUB_WORKSPACE/avif_x64_dynamic
-        cp -r $GITHUB_WORKSPACE/avif_x64 $GITHUB_WORKSPACE/avif_arm64
-        cp -r $GITHUB_WORKSPACE/avif_x64 $GITHUB_WORKSPACE/avif_arm64_dynamic
+        # x64 builds are cross-compiled on the arm64 runner, so pass the CMake arch
+        # explicitly (x86_64 for x64, arm64 for arm64).
+        if [ "${{ inputs.arch }}" = "x64" ]; then OSX_ARCH=x86_64; else OSX_ARCH=arm64; fi
 
-        mkdir -p $GITHUB_WORKSPACE/avif_x64/build
-        cd $GITHUB_WORKSPACE/avif_x64/build
-        cmake -DBUILD_SHARED_LIBS=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/static_x64 -DCMAKE_OSX_ARCHITECTURES=x86_64 ..
+        git clone --depth 1 --branch v1.4.2 https://github.com/AOMediaCodec/libavif avif
+        cp -r $GITHUB_WORKSPACE/avif $GITHUB_WORKSPACE/avif_dynamic
+
+        mkdir -p $GITHUB_WORKSPACE/avif/build
+        cd $GITHUB_WORKSPACE/avif/build
+        cmake -DBUILD_SHARED_LIBS=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/static_${{ inputs.arch }} -DCMAKE_OSX_ARCHITECTURES=$OSX_ARCH ..
         cmake --build . --parallel
 
-        mkdir -p $GITHUB_WORKSPACE/avif_x64_dynamic/build
-        cd $GITHUB_WORKSPACE/avif_x64_dynamic/build
-        cmake -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/dynamic_x64 -DCMAKE_OSX_ARCHITECTURES=x86_64 ..
-        cmake --build . --parallel
-
-        mkdir -p $GITHUB_WORKSPACE/avif_arm64/build
-        cd $GITHUB_WORKSPACE/avif_arm64/build
-        cmake -DBUILD_SHARED_LIBS=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/static_arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 ..
-        cmake --build . --parallel
-
-        mkdir -p $GITHUB_WORKSPACE/avif_arm64_dynamic/build
-        cd $GITHUB_WORKSPACE/avif_arm64_dynamic/build
-        cmake -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/dynamic_arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 ..
+        mkdir -p $GITHUB_WORKSPACE/avif_dynamic/build
+        cd $GITHUB_WORKSPACE/avif_dynamic/build
+        cmake -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/dynamic_${{ inputs.arch }} -DCMAKE_OSX_ARCHITECTURES=$OSX_ARCH ..
         cmake --build . --parallel
 
     - name: Prepare local
       shell: bash
       run: |
-        mv $GITHUB_WORKSPACE/static_x64/lib/libSvtAv1Enc.a $GITHUB_WORKSPACE/static_x64/lib/libsvtav1.a
-        cp -r $GITHUB_WORKSPACE/avif_x64/include/avif $GITHUB_WORKSPACE/static_x64/include
-        cp $GITHUB_WORKSPACE/avif_x64/build/libavif.a $GITHUB_WORKSPACE/static_x64/lib/libavif.a
+        cp -r $GITHUB_WORKSPACE/avif/include/avif $GITHUB_WORKSPACE/static_${{ inputs.arch }}/include
+        cp $GITHUB_WORKSPACE/avif/build/libavif.a $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/libavif.a
 
-        mv $GITHUB_WORKSPACE/dynamic_x64/lib/libSvtAv1Enc.dylib $GITHUB_WORKSPACE/dynamic_x64/lib/libsvtav1.dylib
-        cp -r $GITHUB_WORKSPACE/avif_x64_dynamic/include/avif $GITHUB_WORKSPACE/dynamic_x64/include
-        cp $GITHUB_WORKSPACE/avif_x64_dynamic/build/libavif.dylib $GITHUB_WORKSPACE/dynamic_x64/lib/libavif.dylib
+        cp -r $GITHUB_WORKSPACE/avif_dynamic/include/avif $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/include
+        cp -a $GITHUB_WORKSPACE/avif_dynamic/build/libavif*.dylib $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/
 
-        mv $GITHUB_WORKSPACE/static_arm64/lib/libSvtAv1Enc.a $GITHUB_WORKSPACE/static_arm64/lib/libsvtav1.a
-        cp -r $GITHUB_WORKSPACE/avif_arm64/include/avif $GITHUB_WORKSPACE/static_arm64/include
-        cp $GITHUB_WORKSPACE/avif_arm64/build/libavif.a $GITHUB_WORKSPACE/static_arm64/lib/libavif.a
-
-        mv $GITHUB_WORKSPACE/dynamic_arm64/lib/libSvtAv1Enc.dylib $GITHUB_WORKSPACE/dynamic_arm64/lib/libsvtav1.dylib
-        cp -r $GITHUB_WORKSPACE/avif_arm64_dynamic/include/avif $GITHUB_WORKSPACE/dynamic_arm64/include
-        cp $GITHUB_WORKSPACE/avif_arm64_dynamic/build/libavif.dylib $GITHUB_WORKSPACE/dynamic_arm64/lib/libavif.dylib
+    - name: Strip debug info
+      shell: bash
+      run: |
+        # Strip DWARF debug info from the static .a files (it's the bulk of their
+        # size and is not needed to link against them). -S removes debug symbols
+        # while keeping the symbol table, so the libraries still link.
+        strip -S $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/*.a
 
     - name: Zip local
       shell: bash
       run: |
-        cd $GITHUB_WORKSPACE/static_x64
-        7z a -tzip -mx=9 $GITHUB_WORKSPACE/static_osx_x64.zip include lib
+        cd $GITHUB_WORKSPACE/static_${{ inputs.arch }}
+        7z a -tzip -mx=9 -snl $GITHUB_WORKSPACE/static_osx_${{ inputs.arch }}.zip include lib
 
-        cd $GITHUB_WORKSPACE/dynamic_x64
-        7z a -tzip -mx=9 $GITHUB_WORKSPACE/dynamic_osx_x64.zip include lib
-
-        cd $GITHUB_WORKSPACE/static_arm64
-        7z a -tzip -mx=9 $GITHUB_WORKSPACE/static_osx_arm64.zip include lib
-
-        cd $GITHUB_WORKSPACE/dynamic_arm64
-        7z a -tzip -mx=9 $GITHUB_WORKSPACE/dynamic_osx_arm64.zip include lib
+        cd $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}
+        # -snl: store the .dylib symlinks as links rather than duplicating them.
+        7z a -tzip -mx=9 -snl $GITHUB_WORKSPACE/dynamic_osx_${{ inputs.arch }}.zip include lib
 
     - name: Save artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: binaries-osx
+        name: binaries-osx-${{ inputs.arch }}
         path: "*.zip"

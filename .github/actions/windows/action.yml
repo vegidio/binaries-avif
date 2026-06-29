@@ -8,14 +8,8 @@ inputs:
   arch:
     description: "Target architecture suffix (e.g. x64, arm64)"
     required: true
-  msystem:
-    description: "MSYS2 environment (e.g. MINGW64, CLANGARM64)"
-    required: true
-  packages:
-    description: "MSYS2 packages to install (newline-separated)"
-    required: true
   triplet-prefix:
-    description: "vcpkg triplet prefix (e.g. x64-mingw); -static and -dynamic are derived from it"
+    description: "vcpkg triplet prefix (e.g. x64-windows); static is <prefix>-static-md, dynamic is <prefix>"
     required: true
 
 runs:
@@ -24,98 +18,135 @@ runs:
     - name: Install NASM
       uses: ilammy/setup-nasm@v1
 
-    - name: Install MSYS2
-      uses: msys2/setup-msys2@v2
-      with:
-        msystem: ${{ inputs.msystem }}
-        update: true
-        install: ${{ inputs.packages }}
-
     - name: Cache vcpkg binaries
       uses: actions/cache@v4
       with:
         path: ${{ github.workspace }}/vcpkg_cache
-        key: vcpkg-${{ runner.os }}-${{ inputs.triplet-prefix }}-2026.06.01
+        key: vcpkg-${{ runner.os }}-msvc-${{ inputs.triplet-prefix }}-2026.06.01
 
     - name: Install vcpkg
-      shell: bash
+      shell: pwsh
       run: |
-        mkdir -p $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib
-        mkdir -p $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib
-        mkdir -p $GITHUB_WORKSPACE/vcpkg_cache
+        $ErrorActionPreference = "Stop"
+        New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib" | Out-Null
+        New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib" | Out-Null
+        New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/vcpkg_cache" | Out-Null
         git clone --depth 1 --branch 2026.06.01 https://github.com/microsoft/vcpkg builder
-        ./builder/bootstrap-vcpkg.sh
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & ./builder/bootstrap-vcpkg.bat
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     - name: Build libyuv, dav1d & svt-av1
-      shell: msys2 {0}
+      shell: pwsh
       env:
-        MSYS2_PATH_TYPE: inherit
         VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
       run: |
-        ./builder/vcpkg install "libyuv:${{ inputs.triplet-prefix }}-static"
-        ./builder/vcpkg install "dav1d:${{ inputs.triplet-prefix }}-static"
-        ./builder/vcpkg install "svt-av1:${{ inputs.triplet-prefix }}-static"
-
-        ./builder/vcpkg install "libyuv:${{ inputs.triplet-prefix }}-dynamic"
-        ./builder/vcpkg install "dav1d:${{ inputs.triplet-prefix }}-dynamic"
-        ./builder/vcpkg install "svt-av1:${{ inputs.triplet-prefix }}-dynamic"
+        $ErrorActionPreference = "Stop"
+        # Static archives use the MSVC static-md triplet (static .lib, dynamic UCRT)
+        # so they link under the default *-pc-windows-msvc target; dynamic uses the
+        # plain triplet (DLLs).
+        foreach ($t in @("${{ inputs.triplet-prefix }}-static-md", "${{ inputs.triplet-prefix }}")) {
+          & ./builder/vcpkg.exe install "libyuv:$t" "dav1d:$t" "svt-av1:$t"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
 
     - name: Prepare dependencies
-      shell: bash
+      shell: pwsh
       run: |
-        cp -r $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet-prefix }}-static/include $GITHUB_WORKSPACE/static_${{ inputs.arch }}/
-        for file in "$GITHUB_WORKSPACE"/builder/installed/${{ inputs.triplet-prefix }}-static/lib/*.a; do
-          cp "$file" "$GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/"
-        done
-
-        cp -r $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet-prefix }}-dynamic/include $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/
-        for file in "$GITHUB_WORKSPACE"/builder/installed/${{ inputs.triplet-prefix }}-dynamic/lib/*.dll.a; do
-          cp "$file" "$GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/"
-        done
-
-        for file in "$GITHUB_WORKSPACE"/builder/installed/${{ inputs.triplet-prefix }}-dynamic/bin/*.dll; do
-          cp "$file" "$GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/"
-        done
+        $ErrorActionPreference = "Stop"
+        $st = "builder/installed/${{ inputs.triplet-prefix }}-static-md"
+        $dy = "builder/installed/${{ inputs.triplet-prefix }}"
+        # Static: MSVC .lib files for *-pc-windows-msvc consumers.
+        Copy-Item -Recurse -Force "$st/include" "static_${{ inputs.arch }}/include"
+        Copy-Item -Force "$st/lib/*.lib" "static_${{ inputs.arch }}/lib/"
+        # Dynamic: DLLs + their import libs (needed to link against the DLLs).
+        Copy-Item -Recurse -Force "$dy/include" "dynamic_${{ inputs.arch }}/include"
+        Copy-Item -Force "$dy/bin/*.dll" "dynamic_${{ inputs.arch }}/lib/"
+        Copy-Item -Force "$dy/lib/*.lib" "dynamic_${{ inputs.arch }}/lib/"
 
     - name: Build avif
-      shell: msys2 {0}
+      shell: pwsh
       env:
-        MSYS2_PATH_TYPE: inherit
-        MSYSTEM: ${{ inputs.msystem }}
+        VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
       run: |
+        $ErrorActionPreference = "Stop"
         git clone --depth 1 --branch v1.4.2 https://github.com/AOMediaCodec/libavif avif
-        cp -r $GITHUB_WORKSPACE/avif $GITHUB_WORKSPACE/avif_dynamic
+        Copy-Item -Recurse -Force avif avif_dynamic
 
-        mkdir -p $GITHUB_WORKSPACE/avif/build
-        cd $GITHUB_WORKSPACE/avif/build
-        cmake -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/static_${{ inputs.arch }} ..
-        cmake --build . --parallel
+        # Consume the deps through vcpkg's toolchain so libavif's SYSTEM-codec
+        # detection (pkg_check_modules for dav1d, find_package for svt-av1/libyuv)
+        # resolves against the installed triplet — vcpkg provides pkgconf and the
+        # right CMAKE_PREFIX_PATH. Manifest mode is disabled so it uses the libs we
+        # already installed in classic mode rather than re-resolving libavif's own
+        # vcpkg.json.
+        $toolchain = "$env:GITHUB_WORKSPACE/builder/scripts/buildsystems/vcpkg.cmake"
 
-        mkdir -p $GITHUB_WORKSPACE/avif_dynamic/build
-        cd $GITHUB_WORKSPACE/avif_dynamic/build
-        cmake -G "MinGW Makefiles" -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/dynamic_${{ inputs.arch }} ..
-        cmake --build . --parallel
+        New-Item -ItemType Directory -Force -Path avif/build | Out-Null
+        Push-Location avif/build
+        cmake -DBUILD_SHARED_LIBS=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_TOOLCHAIN_FILE="$toolchain" -DVCPKG_TARGET_TRIPLET="${{ inputs.triplet-prefix }}-static-md" -DVCPKG_MANIFEST_MODE=OFF ..
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        cmake --build . --config Release --parallel
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Pop-Location
+
+        New-Item -ItemType Directory -Force -Path avif_dynamic/build | Out-Null
+        Push-Location avif_dynamic/build
+        cmake -DBUILD_SHARED_LIBS=ON -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_TOOLCHAIN_FILE="$toolchain" -DVCPKG_TARGET_TRIPLET="${{ inputs.triplet-prefix }}" -DVCPKG_MANIFEST_MODE=OFF ..
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        cmake --build . --config Release --parallel
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Pop-Location
 
     - name: Prepare local
-      shell: bash
+      shell: pwsh
       run: |
-        mv $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/libSvtAv1Enc.a $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/libsvtav1.a
-        cp -r "$GITHUB_WORKSPACE"/avif/include/avif "$GITHUB_WORKSPACE"/static_${{ inputs.arch }}/include/
-        cp "$GITHUB_WORKSPACE"/avif/build/libavif.a "$GITHUB_WORKSPACE"/static_${{ inputs.arch }}/lib/libavif.a
+        $ErrorActionPreference = "Stop"
+        Copy-Item -Recurse -Force avif/include/avif "static_${{ inputs.arch }}/include/avif"
+        Copy-Item -Force avif/build/Release/avif.lib "static_${{ inputs.arch }}/lib/avif.lib"
 
-        mv $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/libSvtAv1Enc.dll $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/libsvtav1.dll
-        cp -r "$GITHUB_WORKSPACE"/avif_dynamic/include/avif "$GITHUB_WORKSPACE"/dynamic_${{ inputs.arch }}/include/
-        cp "$GITHUB_WORKSPACE"/avif_dynamic/build/libavif.dll "$GITHUB_WORKSPACE"/dynamic_${{ inputs.arch }}/lib/libavif.dll
-        rm "$GITHUB_WORKSPACE"/dynamic_${{ inputs.arch }}/lib/*.dll.a
+        Copy-Item -Recurse -Force avif_dynamic/include/avif "dynamic_${{ inputs.arch }}/include/avif"
+        Copy-Item -Force avif_dynamic/build/Release/avif.dll "dynamic_${{ inputs.arch }}/lib/avif.dll"
+        Copy-Item -Force avif_dynamic/build/Release/avif.lib "dynamic_${{ inputs.arch }}/lib/avif.lib"
+
+    - name: Strip debug info from libs
+      shell: pwsh
+      run: |
+        # Strip the CodeView debug info from the static .lib files — it's the bulk
+        # of their size and isn't needed to link against them. --strip-debug removes
+        # only debug sections, keeping the symbol table so the libraries still link.
+        # Only the static set is stripped: the dynamic set's import libraries
+        # (short-import members) would trip up llvm-objcopy and aren't bloated.
+        $objcopy = (Get-Command llvm-objcopy -ErrorAction SilentlyContinue).Source
+        if (-not $objcopy) { $objcopy = "C:\Program Files\LLVM\bin\llvm-objcopy.exe" }
+        if (-not (Test-Path $objcopy)) { choco install llvm -y; $objcopy = "C:\Program Files\LLVM\bin\llvm-objcopy.exe" }
+        # Some MSVC libs carry members llvm-objcopy can't parse (e.g. LTCG/anonymous
+        # objects -> "unsupported object file format"). Don't abort on those: strip to
+        # a temp file and swap in only on success, otherwise skip (the lib stays
+        # unstripped but still links).
+        $ErrorActionPreference = "Continue"
+        $PSNativeCommandUseErrorActionPreference = $false
+        Get-ChildItem "static_${{ inputs.arch }}/lib" -Filter *.lib | ForEach-Object {
+          $src = $_.FullName; $tmp = "$src.stripped"
+          & $objcopy --strip-debug $src $tmp 2>$null
+          if ($LASTEXITCODE -eq 0 -and (Test-Path $tmp)) {
+            Move-Item -Force $tmp $src
+          } else {
+            if (Test-Path $tmp) { Remove-Item -Force $tmp }
+            Write-Host "skip (unsupported by llvm-objcopy): $($_.Name)"
+          }
+        }
+        exit 0
 
     - name: Zip local
-      shell: bash
+      shell: pwsh
       run: |
-        cd $GITHUB_WORKSPACE/static_${{ inputs.arch }}
-        7z a -tzip -mx=9 $GITHUB_WORKSPACE/static_windows_${{ inputs.arch }}.zip include lib
-
-        cd $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}
-        7z a -tzip -mx=9 $GITHUB_WORKSPACE/dynamic_windows_${{ inputs.arch }}.zip include lib
+        $ErrorActionPreference = "Stop"
+        Push-Location "static_${{ inputs.arch }}"
+        7z a -tzip -mx=9 -snl "$env:GITHUB_WORKSPACE/static_windows_${{ inputs.arch }}.zip" include lib
+        Pop-Location
+        Push-Location "dynamic_${{ inputs.arch }}"
+        7z a -tzip -mx=9 -snl "$env:GITHUB_WORKSPACE/dynamic_windows_${{ inputs.arch }}.zip" include lib
+        Pop-Location
 
     - name: Save artifacts
       uses: actions/upload-artifact@v4

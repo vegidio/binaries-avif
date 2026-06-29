@@ -56,7 +56,8 @@ runs:
         cp $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}/lib/*.a $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/
 
         cp -r $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}-dynamic/include $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/include
-        cp $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}-dynamic/lib/*.so $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/
+        # cp -a preserves the SONAME .so symlinks as links rather than copies.
+        cp -a $GITHUB_WORKSPACE/builder/installed/${{ inputs.triplet }}-dynamic/lib/*.so* $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/
 
     - name: Build avif
       shell: bash
@@ -77,22 +78,30 @@ runs:
     - name: Prepare local
       shell: bash
       run: |
-        mv $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/libSvtAv1Enc.a $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/libsvtav1.a
         cp -r $GITHUB_WORKSPACE/avif/include/avif $GITHUB_WORKSPACE/static_${{ inputs.arch }}/include
         cp $GITHUB_WORKSPACE/avif/build/libavif.a $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/libavif.a
 
-        mv $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/libSvtAv1Enc.so $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/libsvtav1.so
         cp -r $GITHUB_WORKSPACE/avif_dynamic/include/avif $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/include
-        cp $GITHUB_WORKSPACE/avif_dynamic/build/libavif.so $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/libavif.so
+        # cp -a preserves the SONAME .so symlinks as links rather than copies.
+        cp -a $GITHUB_WORKSPACE/avif_dynamic/build/libavif*.so* $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib/
+
+    - name: Strip debug info
+      shell: bash
+      run: |
+        # Strip DWARF debug info from the static .a files (it's the bulk of their
+        # size and is not needed to link against them). --strip-debug keeps the
+        # symbol table, so the libraries still link; native strip matches the arch.
+        strip --strip-debug $GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib/*.a
 
     - name: Zip local
       shell: bash
       run: |
         cd $GITHUB_WORKSPACE/static_${{ inputs.arch }}
-        7z a -tzip -mx=9 $GITHUB_WORKSPACE/static_linux_${{ inputs.arch }}.zip include lib
+        7z a -tzip -mx=9 -snl $GITHUB_WORKSPACE/static_linux_${{ inputs.arch }}.zip include lib
 
         cd $GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}
-        7z a -tzip -mx=9 $GITHUB_WORKSPACE/dynamic_linux_${{ inputs.arch }}.zip include lib
+        # -snl: store the .so SONAME symlinks as links rather than duplicating them.
+        7z a -tzip -mx=9 -snl $GITHUB_WORKSPACE/dynamic_linux_${{ inputs.arch }}.zip include lib
 
     - name: Save artifacts
       uses: actions/upload-artifact@v4

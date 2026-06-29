@@ -10,15 +10,32 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Intel macOS runners are scarce, so x64 is cross-compiled on the arm64
+          # runner (the x64-osx triplet sets VCPKG_OSX_ARCHITECTURES=x86_64).
+          - runner: macos-latest
+            arch: x64
+            triplet: x64-osx
+            deployment: "10.15"
+          - runner: macos-latest
+            arch: arm64
+            triplet: arm64-osx
+            deployment: "11.0"
+    runs-on: ${{ matrix.runner }}
     env:
-      MACOSX_DEPLOYMENT_TARGET: "10.15"
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment }}
     steps:
       - name: Code checkout
         uses: actions/checkout@v5
 
       - name: Create macOS binaries
         uses: ./.github/actions/macos
+        with:
+          arch: ${{ matrix.arch }}
+          triplet: ${{ matrix.triplet }}
 
   build-linux:
     strategy:
@@ -42,7 +59,7 @@ jobs:
           arch: ${{ matrix.arch }}
           triplet: ${{ matrix.triplet }}
 
-  build-windows:
+  build-mingw:
     strategy:
       fail-fast: false
       matrix:
@@ -68,17 +85,39 @@ jobs:
       - name: Code checkout
         uses: actions/checkout@v5
 
-      - name: Create Windows binaries
-        uses: ./.github/actions/windows
+      - name: Create MinGW binaries
+        uses: ./.github/actions/mingw
         with:
           arch: ${{ matrix.arch }}
           msystem: ${{ matrix.msystem }}
           packages: ${{ matrix.packages }}
           triplet-prefix: ${{ matrix.triplet-prefix }}
 
+  build-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+            triplet-prefix: x64-windows
+          - runner: windows-11-arm
+            arch: arm64
+            triplet-prefix: arm64-windows
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@v5
+
+      - name: Create Windows binaries
+        uses: ./.github/actions/windows
+        with:
+          arch: ${{ matrix.arch }}
+          triplet-prefix: ${{ matrix.triplet-prefix }}
+
   release:
     runs-on: ubuntu-latest
-    needs: [build-macos, build-linux, build-windows]
+    needs: [build-macos, build-linux, build-windows, build-mingw]
     permissions:
       contents: write
     steps:
