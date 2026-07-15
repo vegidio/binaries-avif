@@ -1,8 +1,8 @@
 name: "windows"
 
 # Pinned upstream versions — bump these to upgrade.
-# vcpkg release tag: 2026.06.01
-# libavif release tag: v1.4.2
+# vcpkg commit: f7892cd41e6c (master — adds libavif svt feature, 2026-07-14)
+# libavif: built by vcpkg (port version 1.4.2), no longer cloned
 
 inputs:
   arch:
@@ -22,7 +22,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ github.workspace }}/vcpkg_cache
-        key: vcpkg-${{ runner.os }}-msvc-${{ inputs.triplet-prefix }}-2026.06.01
+        key: vcpkg-${{ runner.os }}-msvc-${{ inputs.triplet-prefix }}-f7892cd
 
     - name: Install vcpkg
       shell: pwsh
@@ -31,12 +31,18 @@ runs:
         New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/static_${{ inputs.arch }}/lib" | Out-Null
         New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/dynamic_${{ inputs.arch }}/lib" | Out-Null
         New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/vcpkg_cache" | Out-Null
-        git clone --depth 1 --branch 2026.06.01 https://github.com/microsoft/vcpkg builder
+        git -c init.defaultBranch=main init builder
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        git -C builder remote add origin https://github.com/microsoft/vcpkg
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        git -C builder fetch --depth 1 origin f7892cd41e6cc68fc864df119dc03b9d2b1ce9d5
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        git -C builder checkout FETCH_HEAD
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         & ./builder/bootstrap-vcpkg.bat
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-    - name: Build libyuv, dav1d & svt-av1
+    - name: Build libavif
       shell: pwsh
       env:
         VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
@@ -44,13 +50,13 @@ runs:
         $ErrorActionPreference = "Stop"
         # Static archives use the MSVC static-md triplet (static .lib, dynamic UCRT)
         # so they link under the default *-pc-windows-msvc target; dynamic uses the
-        # plain triplet (DLLs).
+        # plain triplet (DLLs). libavif pulls dav1d, svt-av1 and libyuv transitively.
         foreach ($t in @("${{ inputs.triplet-prefix }}-static-md", "${{ inputs.triplet-prefix }}")) {
-          & ./builder/vcpkg.exe install "libyuv:$t" "dav1d:$t" "svt-av1:$t"
+          & ./builder/vcpkg.exe install "libavif[core,dav1d,svt]:$t"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         }
 
-    - name: Prepare dependencies
+    - name: Stage libraries
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
@@ -63,50 +69,6 @@ runs:
         Copy-Item -Recurse -Force "$dy/include" "dynamic_${{ inputs.arch }}/include"
         Copy-Item -Force "$dy/bin/*.dll" "dynamic_${{ inputs.arch }}/lib/"
         Copy-Item -Force "$dy/lib/*.lib" "dynamic_${{ inputs.arch }}/lib/"
-
-    - name: Build avif
-      shell: pwsh
-      env:
-        VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg_cache
-      run: |
-        $ErrorActionPreference = "Stop"
-        git clone --depth 1 --branch v1.4.2 https://github.com/AOMediaCodec/libavif avif
-        Copy-Item -Recurse -Force avif avif_dynamic
-
-        # Consume the deps through vcpkg's toolchain so libavif's SYSTEM-codec
-        # detection (pkg_check_modules for dav1d, find_package for svt-av1/libyuv)
-        # resolves against the installed triplet — vcpkg provides pkgconf and the
-        # right CMAKE_PREFIX_PATH. Manifest mode is disabled so it uses the libs we
-        # already installed in classic mode rather than re-resolving libavif's own
-        # vcpkg.json.
-        $toolchain = "$env:GITHUB_WORKSPACE/builder/scripts/buildsystems/vcpkg.cmake"
-
-        New-Item -ItemType Directory -Force -Path avif/build | Out-Null
-        Push-Location avif/build
-        cmake -DBUILD_SHARED_LIBS=OFF -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_TOOLCHAIN_FILE="$toolchain" -DVCPKG_TARGET_TRIPLET="${{ inputs.triplet-prefix }}-static-md" -DVCPKG_MANIFEST_MODE=OFF ..
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        cmake --build . --config Release --parallel
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        Pop-Location
-
-        New-Item -ItemType Directory -Force -Path avif_dynamic/build | Out-Null
-        Push-Location avif_dynamic/build
-        cmake -DBUILD_SHARED_LIBS=ON -DAVIF_BUILD_APPS=OFF -DAVIF_CODEC_DAV1D=SYSTEM -DAVIF_CODEC_SVT=SYSTEM -DAVIF_LIBYUV=SYSTEM -DCMAKE_TOOLCHAIN_FILE="$toolchain" -DVCPKG_TARGET_TRIPLET="${{ inputs.triplet-prefix }}" -DVCPKG_MANIFEST_MODE=OFF ..
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        cmake --build . --config Release --parallel
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        Pop-Location
-
-    - name: Prepare local
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = "Stop"
-        Copy-Item -Recurse -Force avif/include/avif "static_${{ inputs.arch }}/include/avif"
-        Copy-Item -Force avif/build/Release/avif.lib "static_${{ inputs.arch }}/lib/avif.lib"
-
-        Copy-Item -Recurse -Force avif_dynamic/include/avif "dynamic_${{ inputs.arch }}/include/avif"
-        Copy-Item -Force avif_dynamic/build/Release/avif.dll "dynamic_${{ inputs.arch }}/lib/avif.dll"
-        Copy-Item -Force avif_dynamic/build/Release/avif.lib "dynamic_${{ inputs.arch }}/lib/avif.lib"
 
     - name: Strip debug info from libs
       shell: pwsh
