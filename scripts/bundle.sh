@@ -179,6 +179,9 @@ die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 # Prints the first lines of a symbol list, for error messages and logs.
 show() { sed -n "1,${2:-50}p" "$1" | sed 's/^/    /'; local n; n=$(wc -l < "$1"); [ "$n" -le "${2:-50}" ] || echo "    ... ($n total)"; }
 
+# Whether stdin has the same lines as file $1. Plain bash, since MSYS2 doesn't ship cmp/diff (diffutils) by default.
+same_as() { [ "$(cat)" = "$(cat "$1")" ]; }
+
 # Path of an LLVM tool: from $LLVM_BIN when set, otherwise from PATH.
 find_tool() {
   if [ -n "${LLVM_BIN:-}" ]; then
@@ -343,7 +346,7 @@ member_table() {
   for kind in D U; do
     if [ "$kind" = D ]; then set -- --defined-only --extern-only; else set -- --undefined-only; fi
     "$NM" -j "$@" "in/$f" 2> nm.err | tr -d '\r' > "syms/$f.$kind" || { cat nm.err >&2; die "llvm-nm failed on $f"; }
-    awk '/:$/ { sub(/:$/, ""); print }' "syms/$f.$kind" | cmp -s - "syms/$f.list" \
+    awk '/:$/ { sub(/:$/, ""); print }' "syms/$f.$kind" | same_as "syms/$f.list" \
       || die "llvm-nm and llvm-ar list the members of $f differently"
     awk -v k="$kind" -v f="$f" 'NF == 0 { next } /:$/ { m++; next } { print k, f, m, $0 }' "syms/$f.$kind"
   done
@@ -451,7 +454,7 @@ done
   | LC_ALL=C comm -23 - closure.def > unresolved
 (cd syms && cat ./*.def) | LC_ALL=C sort -u | LC_ALL=C comm -12 unresolved - > offenders
 [ ! -s offenders ] || { echo "Symbols the pruned closure leaves undefined although an input archive defines them:"; show offenders; die "pruning failed"; }
-awk '$1 == "U" { print $2 }' closure.out | LC_ALL=C sort | cmp -s - unresolved \
+awk '$1 == "U" { print $2 }' closure.out | LC_ALL=C sort | same_as unresolved \
   || die "the pruned archives leave other symbols undefined than the closure computed"
 log "left to the system/C++ runtime: $(wc -l < unresolved | tr -d ' ') symbols"
 
